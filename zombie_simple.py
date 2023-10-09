@@ -4,6 +4,7 @@ import sys
 import pathlib
 import time
 from datetime import datetime
+import json
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -19,6 +20,14 @@ RUN_ID = datetime.now().strftime('%Y%m%d%H%M%S')
 # RUN_ID file
 RUN_ID_FILE = pathlib.Path('.', 'RUN_ID')
 
+# Stages
+# TODO
+#   Set to `False` to opt out a stage
+# -- Simulation Stage
+EN_SIM = True
+# -- Plotting Stage
+EN_PLOT = True
+
 # Output folder:
 # TODO
 #   The output folder can be changed.
@@ -27,6 +36,9 @@ if not OUT_FOLDER.exists():
     OUT_FOLDER.mkdir(parents=True)
 else:
     raise Exception('Output Folder %s already existed.' % OUT_FOLDER)
+
+# Config summary file
+CONFIG_SUM_FILE = pathlib.Path(OUT_FOLDER, 'config_%s.json' % RUN_ID)
 
 # Output files
 # Format of CSV:
@@ -583,6 +595,34 @@ class GameLog:
         else:
             logging.basicConfig(format='%(message)s', level=LOG_LEVEL)
         self.m_ref_sim = ref_sim
+        self.__config_summary()
+
+    def __config_summary(self):
+        """
+        Summarize all configurations in a JSON file.
+        :return: None.
+        """
+        d_config = {
+            'MAX_ITER': MAX_ITER,
+            'NUM_AGENTS': NUM_AGENTS,
+            'NUM_NEIG': NUM_NEIG,
+            'H_PROB': H_PROB,
+            'D_PROB': D_PROB,
+            'Z_PROB': Z_PROB,
+            'H_ENERGY': H_ENERGY,
+            'D_ENERGY': D_ENERGY,
+            'Z_ENERGY': Z_ENERGY,
+            'BITE_PROB': BITE_PROB,
+            'BITE_GAIN': BITE_GAIN,
+            'Z_DECAY': Z_DECAY,
+            'BITE_HURT': BITE_HURT,
+            'H_DECAY': H_DECAY,
+            'LIFE_GAIN': LIFE_GAIN,
+            'BITE_EFF': BITE_EFF
+        }
+        with open(CONFIG_SUM_FILE, 'w') as out_fd:
+            json.dump(d_config, out_fd, indent=4)
+        logging.info('Log [GameLog:config_summary] Done writing config summary file: %s' % CONFIG_SUM_FILE)
 
     def __compose_log(self, msg):
         class_name = sys._getframe(2).f_locals['self'].__class__.__name__ \
@@ -698,17 +738,19 @@ class GamePlot:
 #   Simulation Main Body
 ##################################################
 if __name__ == '__main__':
-    ins_game = ZombieGameSim()
-    ins_game.start()
+    if EN_SIM:
+        ins_game = ZombieGameSim()
+        ins_game.start()
 
-    with open(RUN_ID_FILE, 'r') as in_fd:
-        run_id = in_fd.readline().strip()
-    ins_plot = GamePlot()
-    df_h_ts_prof, df_d_ts_prof, df_z_ts_prof = ins_plot.load_ts_profiles(run_id)
-    title_prefix = 'HUMAN STATE TIME SERIES'
-    ins_plot.plot_ts_state(run_id, title_prefix, df_h_ts_prof, states=ALIVE|INFECTED|DEAD, out_folder=OUT_FOLDER)
-    title_prefix = 'DOCTOR STATE TIME SERIES'
-    ins_plot.plot_ts_state(run_id, title_prefix, df_d_ts_prof, states=ALIVE|INFECTED|DEAD, out_folder=OUT_FOLDER)
-    title_prefix = 'ZOMBIE STATE TIME SERIES'
-    ins_plot.plot_ts_state(run_id, title_prefix, df_z_ts_prof, states=ALIVE|DEAD, out_folder=OUT_FOLDER)
+    if EN_PLOT:
+        with open(RUN_ID_FILE, 'r') as in_fd:
+            run_id = in_fd.readline().strip()
+        ins_plot = GamePlot()
+        df_h_ts_prof, df_d_ts_prof, df_z_ts_prof = ins_plot.load_ts_profiles(run_id)
+        title_prefix = 'HUMAN STATE TIME SERIES'
+        ins_plot.plot_ts_state(run_id, title_prefix, df_h_ts_prof, states=ALIVE|INFECTED|DEAD, out_folder=OUT_FOLDER)
+        title_prefix = 'DOCTOR STATE TIME SERIES'
+        ins_plot.plot_ts_state(run_id, title_prefix, df_d_ts_prof, states=ALIVE|INFECTED|DEAD, out_folder=OUT_FOLDER)
+        title_prefix = 'ZOMBIE STATE TIME SERIES'
+        ins_plot.plot_ts_state(run_id, title_prefix, df_z_ts_prof, states=ALIVE|DEAD, out_folder=OUT_FOLDER)
 
