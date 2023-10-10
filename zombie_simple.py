@@ -55,7 +55,8 @@ Z_PROF_FILE = pathlib.Path(OUT_FOLDER, Z_PROF_FMT % RUN_ID)
 # Log level
 # TODO
 #   Adjust the log level according to your need.
-LOG_LEVEL = logging.DEBUG
+# LOG_LEVEL = logging.DEBUG
+LOG_LEVEL = logging.INFO
 
 # Log file
 # TODO
@@ -66,12 +67,12 @@ LOG_FILE = pathlib.Path(OUT_FOLDER, '%s.log' % RUN_ID)
 # Max iterations
 # TODO
 #   Change it.
-MAX_ITER = 500
+MAX_ITER = 2000
 
 # Total number of agents
 # TODO
 #   Change it.
-NUM_AGENTS = 100
+NUM_AGENTS = 500
 
 # Agent types
 HUMAN = 1
@@ -151,11 +152,12 @@ class ZombieGameSim:
         self.m_l_zombies = [Zombie(z_start_id + i, Z_ENERGY, self) for i in range(nd_agent_cnt[2])]
         # Initialize logger
         self.m_logger = GameLog(self)
+        self.m_logger.config_summary()
         self.m_logger.info('%s Humans, %s Doctors, and %s Zombies have joined the game.'
                       % (len(self.m_l_humans), len(self.m_l_doctors), len(self.m_l_zombies)))
 
     def start(self):
-        self.m_logger.info('Game started...')
+        self.m_logger.info('Game Started...')
         # Simulation iterations
         start_time = time.time()
         self.m_cur_moment = 0
@@ -184,6 +186,7 @@ class ZombieGameSim:
         # Output RUN_ID
         with open(RUN_ID_FILE, 'w') as out_fd:
             out_fd.write(RUN_ID)
+        self.m_logger.info('Game Over. Overall Elapse: %s' % (time.time() - start_time))
 
     def __output_ts_profile(self):
         """
@@ -595,9 +598,8 @@ class GameLog:
         else:
             logging.basicConfig(format='%(message)s', level=LOG_LEVEL)
         self.m_ref_sim = ref_sim
-        self.__config_summary()
 
-    def __config_summary(self):
+    def config_summary(self):
         """
         Summarize all configurations in a JSON file.
         :return: None.
