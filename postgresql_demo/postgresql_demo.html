@@ -3,7 +3,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       
-      <link rel="stylesheet" href="file:////home/fmeng/.vscode/extensions/shd101wyy.markdown-preview-enhanced-0.8.9/crossnote/dependencies/katex/katex.min.css">
+      <link rel="stylesheet" href="file:////home/fmeng/.vscode/extensions/shd101wyy.markdown-preview-enhanced-0.8.10/crossnote/dependencies/katex/katex.min.css">
       
       
       
@@ -47,6 +47,11 @@ Oct 25 17:38:59 fmeng-p16 systemd[1]: Starting PostgreSQL RDBMS...
 Oct 25 17:38:59 fmeng-p16 systemd[1]: Finished PostgreSQL RDBMS.
 </code></pre></li>
 </ul>
+<p>Since we will manually start the Postgresql server, we do not need this system service running in the background. We stop this system service using the following cmd:</p>
+<pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code><span class="token function">sudo</span> systemctl stop postgresql
+</code></pre><p>And, we disable it using the following cmd:</p>
+<pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code><span class="token function">sudo</span> systemctl disable postgresql
+</code></pre><p>After this, Postgresql will not be started automatically in the start of OS.</p>
 <h2 id="3-create-a-folder-for-the-data-of-postgresql">3. Create a folder for the data of Postgresql </h2>
 <pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code>    <span class="token builtin class-name">cd</span> ~/workspace
     <span class="token function">mkdir</span> postgres_data
@@ -124,7 +129,35 @@ drwxrwsr-x  2 fmeng             fmeng    80 Oct 25 20:01 postgresql
 <p>If it succeeds, the output will look like this:</p>
 <pre data-role="codeBlock" data-info="" class="language-text text"><code>waiting for server to start.... done
 server started
-</code></pre><p>We can also check the status of the Postgresql server, using the following cmd:</p>
+</code></pre><blockquote>
+<p><strong>NOTE</strong><br>
+<code>pg_ctl</code> will need the environment variable named <code>PGDATA</code> to be set to the data space path, if you do not want to use <code>-D</code> every time you use this cmd.</p>
+</blockquote>
+<p>For convenience, we can create a Bash script, named <code>start_postgresql.sh</code>, with the following lines:</p>
+<pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code><span class="token shebang important">#!/bin/bash</span>
+
+<span class="token builtin class-name">read</span> <span class="token parameter variable">-p</span> <span class="token string">"Please specify the data space path: "</span> ds_path
+<span class="token function">chown</span> <span class="token parameter variable">-R</span> <span class="token environment constant">$USER</span><span class="token builtin class-name">:</span><span class="token environment constant">$USER</span> /var/run/postgresql
+<span class="token builtin class-name">export</span> <span class="token assign-left variable">PGDATA</span><span class="token operator">=</span><span class="token variable">$ds_path</span>
+pg_ctl start <span class="token parameter variable">-l</span> <span class="token variable">$ds_path</span>/logfile
+
+</code></pre><p>Then, we enable the execution of this script as follows:</p>
+<pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code><span class="token function">chmod</span> +x start_postgresql.sh
+</code></pre><p>This script does the following steps:</p>
+<ul>
+<li>(1) Ask for the data space path. And you will input that.</li>
+<li>(2) Change the <code>owner</code> and <code>group</code> of <code>/var/run/postgresql</code> to avoid the user issue.</li>
+<li>(3) Create the environment variable <code>PGDATA</code> for the data space path.</li>
+<li>(4) Start the Postgresql server.</li>
+</ul>
+<p>To execute this script, you need to enter the folder where this script is located, and use the following cmd:</p>
+<pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code><span class="token builtin class-name">.</span> start_postgresql.sh
+</code></pre><blockquote>
+<p><strong>NOTE</strong><br>
+Please pay particular attention to the dot, <code>.</code>, at the beginning of this cmd. This dot will enable the envrionment variable <code>PGDATA</code> to be adopted by your terminal when you quit from the script. Otherwise, it will vanish after the script quits.</p>
+</blockquote>
+<p>From now on, every time you want to start the Postgresql server, you will use this script to do it.</p>
+<p>To check the status of the Postgresql server, using the following cmd:</p>
 <pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code>pg_ctl status
 </code></pre><p>And, the output will look like this:</p>
 <pre data-role="codeBlock" data-info="" class="language-text text"><code>pg_ctl: server is running (PID: 26712)

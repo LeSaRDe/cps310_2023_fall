@@ -32,6 +32,16 @@ Use the following link: https://www.postgresql.org/download/
     Oct 25 17:38:59 fmeng-p16 systemd[1]: Finished PostgreSQL RDBMS.
     ```
 
+Since we will manually start the Postgresql server, we do not need this system service running in the background. We stop this system service using the following cmd:
+```bash
+sudo systemctl stop postgresql
+```
+And, we disable it using the following cmd:
+```bash
+sudo systemctl disable postgresql
+```
+After this, Postgresql will not be started automatically in the start of OS.
+
 ## 3. Create a folder for the data of Postgresql
 ```bash
     cd ~/workspace
@@ -131,7 +141,39 @@ waiting for server to start.... done
 server started
 ```
 
-We can also check the status of the Postgresql server, using the following cmd:
+> **NOTE**
+> `pg_ctl` will need the environment variable named `PGDATA` to be set to the data space path, if you do not want to use `-D` every time you use this cmd.
+
+For convenience, we can create a Bash script, named `start_postgresql.sh`, with the following lines:
+```bash
+#!/bin/bash
+
+read -p "Please specify the data space path: " ds_path
+chown -R $USER:$USER /var/run/postgresql
+export PGDATA=$ds_path
+pg_ctl start -l $ds_path/logfile
+
+```
+Then, we enable the execution of this script as follows:
+```bash
+chmod +x start_postgresql.sh
+```
+This script does the following steps:
+- (1) Ask for the data space path. And you will input that.
+- (2) Change the `owner` and `group` of `/var/run/postgresql` to avoid the user issue.
+- (3) Create the environment variable `PGDATA` for the data space path.
+- (4) Start the Postgresql server.
+
+To execute this script, you need to enter the folder where this script is located, and use the following cmd:
+```bash
+. start_postgresql.sh
+```
+> **NOTE**
+> Please pay particular attention to the dot, `.`, at the beginning of this cmd. This dot will enable the envrionment variable `PGDATA` to be adopted by your terminal when you quit from the script. Otherwise, it will vanish after the script quits.
+
+From now on, every time you want to start the Postgresql server, you will use this script to do it.
+
+To check the status of the Postgresql server, using the following cmd:
 ```bash
 pg_ctl status
 ```
