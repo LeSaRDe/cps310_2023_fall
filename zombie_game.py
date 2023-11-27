@@ -109,10 +109,6 @@ class DataBroker:
     #   - One or multiple messages will be sent back to client.
     #   - For each response message: [AID]#[ATTR1|ATTR2|...]#[VAL1|VAL2|...]
 
-    # Reference to GameConfig.
-    m_ref_config = None
-    # Logger
-    m_logger = None
     # The request receiver process.
     m_receiver = None
     # The request queue.
@@ -121,14 +117,14 @@ class DataBroker:
     m_server = None
 
     def __init__(self, ref_config):
-        self.m_logger = GameLog.get_logger(log_level=LOG_LEVEL, logger_name='DataBroker')
+        self.m_logger = GameLog.get_logger(log_level=LOG_LEVEL, logger_name='BR_MAIN')
         if ref_config is None or not isinstance(ref_config, GameConfig):
             raise Exception('[DataBroker:__init__] GameConfig has not been initialized.')
         self.m_ref_config = ref_config
         self.__init_db()
         self.m_request_q = mp.Queue(-1)
-        self.m_receiver = mp.Process(target=self.__receiver_func, args=(), name='BR_RECV')
-        self.m_server = mp.Process(target=self.__server_func, args=(), name='BR_SERV')
+        self.m_receiver = mp.Process(target=self.__receiver_func, args=(self.m_request_q,), name='BR_RECV')
+        self.m_server = mp.Process(target=self.__server_func, args=(self.m_request_q,), name='BR_SERV')
         self.m_server.start()
 
     def __init_db(self):
@@ -157,7 +153,7 @@ class DataBroker:
                 except Exception as e:
                     self.m_logger.error('[DataBroker:__init_db] Failed to create table `agent_status`: %s' % e)
                     sys.exit(-1)
-        self.m_logger.debug('DataInit [DataBroker:__init_db] Done.')
+        self.m_logger.info('[DataBroker:__init_db] Done.')
 
     @staticmethod
     def send_request(host, port, cmd_str, cond_str, attr_str, val_str=None):
@@ -242,13 +238,17 @@ class DataBroker:
         logger = GameLog.get_logger(log_level=LOG_LEVEL, logger_name=mp.current_process().name)
         logger.debug('[DataBroker:__notification_listen_func] Terminate notifier.')
 
-    def __receiver_func(self):
+    @staticmethod
+    def __receiver_func(request_q):
         """
         Receive data operation requests from working processes, and enqueue requests. When the queue length reaches
-        10% of the expected length, the receiver pauses incoming streams, and will continue when the length is lower
+        80% of the expected length, the receiver pauses incoming streams, and will continue when the length is lower
         than 50%. The pause msg sent by the receiver is a single msg with 'P'.
         :return: None
         """
+        logger = GameLog.get_logger(log_level=LOG_LEVEL, logger_name=mp.current_process().name)
+        logger.info('[DataBroker:__receiver_func] Receiver started.')
+
         l_listener_addr = []
         recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         recv_sock.bind((GameConfig.BR_HOST, GameConfig.BR_PORT))
@@ -257,21 +257,30 @@ class DataBroker:
             msg = msg.decode('utf-8')
             if msg == 'T':
                 # Terminate the server process.
-                self.m_request_q.put_nowait(None)
+                request_q.put_nowait('T')
                 # Terminate all notification listener processes.
                 for listener_addr in l_listener_addr:
                     recv_sock.sendto('T', listener_addr)
+                break
             elif msg == 'R':
                 # Register notification listener.
                 l_listener_addr.append(addr)
+            elif msg == 'C':
+                # Notify all listeners to continue sending requests.
+                for listener_addr in l_listener_addr:
+                    recv_sock.sendto('C', listener_addr)
             else:
                 # If the request queue is likely to be overwhelmed, send msg 'P' to request senders to pause incoming
                 # requests.
-                if self.m_request_q.qsize() >= GameConfig.BR_Q_EXP_LEN * 0.1:
+                if request_q.qsize() >= GameConfig.BR_Q_EXP_LEN * 0.8:
                     recv_sock.sendto('P', addr)
-                self.m_request_q.put([msg, addr])
+                    request_q.put_nowait('P')
+                request_q.put_nowait([msg, addr])
+        recv_sock.close()
+        logger.info('[DataBroker:__receiver_func] Receiver stopped.')
 
-    def __server_func(self):
+    @staticmethod
+    def __server_func(request_q):
         """
         The server process function processing incoming DB requests.
         NOTE:
@@ -280,33 +289,49 @@ class DataBroker:
         TODO
             Need a request queue.
         """
-        self.m_logger.info('[DataBroker:__server_func] DataBroker started.')
-        with pg.connect(host=self.m_ref_config.DB_HOST,
-                        dbname=self.m_ref_config.DB_NAME,
-                        user=self.m_ref_config.DB_USER,
-                        password=self.m_ref_config.DB_PASSWORD) as db_con:
+        logger = GameLog.get_logger(log_level=LOG_LEVEL, logger_name=mp.current_process().name)
+        logger.info('[DataBroker:__server_func] Server started.')
+
+        serv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        serv_sock.bind((GameConfig.BR_HOST, GameConfig.BR_PORT))
+        need_continue = False
+        with pg.connect(host=GameConfig.DB_HOST,
+                        dbname=GameConfig.DB_NAME,
+                        user=GameConfig.DB_USER,
+                        password=GameConfig.DB_PASSWORD) as db_con:
             with db_con.cursor() as db_cur:
                 while True:
-                    request, addr = self.m_request_q.get()
-                    if request is None:
+                    request = request_q.get()
+                    if request == 'T':
                         db_con.commit()
                         break
-                    sql_str, data_fb = self.__parse_request(request)
+                    if request == 'P':
+                        need_continue = True
+                        continue
+                    sql_str, data_fb = DataBroker.__parse_request(request)
                     db_cur.execute(sql_str)
                     # Data feedback is needed.
-                    # if data_fb:
-        self.m_request_q.close()
-        self.m_logger.info('[DataBroker:__server_func] DataBroker stopped.')
+                    # TODO
+                    if data_fb:
+                        fb_size = db_cur.rowcount
+                        # serv_sock.sendto(, addr)
+                    # Notify Receiver to continue receiving requests.
+                    if need_continue and request_q.qsize() <= GameConfig.BR_Q_EXP_LEN * 0.5:
+                        serv_sock.sendto('C', (GameConfig.BR_HOST, GameConfig.BR_PORT))
+        serv_sock.close()
+        logger.info('[DataBroker:__server_func] Server stopped.')
 
-    def __parse_request(self, raw_msg):
+    @staticmethod
+    def __parse_request(raw_msg):
         """
         Parse a raw message received from a simulation working process to a SQL query string.
         :param raw_msg: (bytes) The raw message.
         :return:  tuple((str or None), bool) The first component is the translated SQL string. The second component
             indicates if data feedback is needed.
         """
-        if raw_msg is None or len(raw_msg) <=0 or not isinstance(raw_msg, str):
-            self.m_logger.error('[DataBroker:__parse_request] Invalid message: %s' % raw_msg)
+        logger = GameLog.get_logger(log_level=LOG_LEVEL, logger_name=mp.current_process().name)
+        if raw_msg is None or len(raw_msg) <= 0 or not isinstance(raw_msg, str):
+            logger.error('[DataBroker:__parse_request] Invalid message: %s' % raw_msg)
             return None, False
 
         l_msg_fields = raw_msg.decode('utf-8').split('#')
@@ -315,7 +340,7 @@ class DataBroker:
             return 'T', False
 
         if len(l_msg_fields) < 3:
-            self.m_logger.error('[DataBroker:__parse_request] Need at least 3 fields: %s' % raw_msg)
+            logger.error('[DataBroker:__parse_request] Need at least 3 fields: %s' % raw_msg)
             return None, False
 
         # Parse conditions
@@ -328,7 +353,7 @@ class DataBroker:
         # Parse attributes
         l_attr = l_msg_fields[2].split('|')
         if len(l_attr) < 1:
-            self.m_logger.error('[DataBroker:__parse_request] Invalid ATTRIBUTE field: %s' % raw_msg)
+            logger.error('[DataBroker:__parse_request] Invalid ATTRIBUTE field: %s' % raw_msg)
             return None, False
 
         # Parse command
@@ -343,14 +368,14 @@ class DataBroker:
                 sql_str = """SELECT %s FROM agent_status""" % (sql_attr)
         else:
             if len(l_msg_fields) < 4:
-                self.m_logger.error('[DataBroker:__parse_request] Need at least 4 fields: %s' % raw_msg)
+                logger.error('[DataBroker:__parse_request] Need at least 4 fields: %s' % raw_msg)
                 return None, False
             l_val = l_msg_fields[3].split('|')
             if len(l_val) < 1:
-                self.m_logger.error('[DataBroker:__parse_request] Invalid VALUE field: %s' % raw_msg)
+                logger.error('[DataBroker:__parse_request] Invalid VALUE field: %s' % raw_msg)
                 return None, False
             if len(l_attr) != len(l_val):
-                self.m_logger.error('[DataBroker:__parse_request] VALUE field does not match ATTRIBUTE field: %s'
+                logger.error('[DataBroker:__parse_request] VALUE field does not match ATTRIBUTE field: %s'
                                     % raw_msg)
                 return None, False
             if cmd == 'U':
@@ -361,14 +386,14 @@ class DataBroker:
                     sql_str = """UPDATE agent_status SET %s""" % (sql_set_str)
             elif cmd == 'I':
                 if len(l_attr) != 7:
-                    self.m_logger.error('[DataBroker:__parse_request] Need exactly 7 attributes for INSERT: %s'
+                    logger.error('[DataBroker:__parse_request] Need exactly 7 attributes for INSERT: %s'
                                         % raw_msg)
                     return None, False
                 sql_attr = ','.join(l_attr)
                 sql_val = ','.join(l_val)
                 sql_str = """INSERT INTO agent_status(%s) VALUES (%s)""" % (sql_attr, sql_val)
             else:
-                self.m_logger.error('[DataBroker:__parse_request] Unsupported data cmd: %s' % cmd)
+                logger.error('[DataBroker:__parse_request] Unsupported data cmd: %s' % cmd)
                 return None, False
         return sql_str, data_feedback
 
@@ -377,9 +402,11 @@ class DataBroker:
         Send the termination cmd to the server process.
         :return: None.
         """
-        client_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        client_sock.sendto(str.encode('T'), (self.m_ref_config.BR_HOST, self.m_ref_config.BR_PORT))
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.sendto(str.encode('T'), (GameConfig.BR_HOST, GameConfig.BR_PORT))
         self.m_server.join()
+        self.m_receiver.join()
+        self.m_request_q.close()
         self.m_logger.info('[DataBroker:stop_br] DataBroker stopped.')
 
 
